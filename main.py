@@ -37,7 +37,6 @@ def load_alerts():
         return pd.DataFrame()
 
     try:
-
         # Try UTF-8 first
         try:
             df = pd.read_csv(
@@ -46,7 +45,7 @@ def load_alerts():
             )
 
         except UnicodeDecodeError:
-            # Some Phase 4 files may be UTF-16
+            # Some CSV files may be UTF-16
             df = pd.read_csv(
                 ALERTS_FILE,
                 encoding="utf-16"
@@ -69,9 +68,7 @@ def load_alerts():
         return df
 
     except Exception as e:
-
         print(f"Error loading alerts: {e}")
-
         return pd.DataFrame()
 
 
@@ -134,7 +131,6 @@ def correlate_alerts(df):
         "src_ip",
         "src"
     ]:
-
         if col in data.columns:
             source_col = col
             break
@@ -151,7 +147,6 @@ def correlate_alerts(df):
         "destination",
         "dst"
     ]:
-
         if col in data.columns:
             destination_col = col
             break
@@ -393,7 +388,7 @@ def add_explanations(incidents_df):
 
 
 # ============================================================
-# PHASE 9 — SAVE REAL PROJECT DATA TO DATABASE
+# PHASE 9 — SAVE PROJECT DATA TO DATABASE
 # ============================================================
 
 def save_project_data_to_database(
@@ -463,7 +458,6 @@ def save_project_data_to_database(
         "src_ip",
         "src"
     ]:
-
         if col in data.columns:
             source_col = col
             break
@@ -477,7 +471,6 @@ def save_project_data_to_database(
         "destination",
         "dst"
     ]:
-
         if col in data.columns:
             destination_col = col
             break
@@ -501,7 +494,7 @@ def save_project_data_to_database(
 
         data["correlation_key"] = "UNKNOWN"
 
-    # Map correlation key → incident ID
+    # Map correlation key to incident ID
     incident_map = {}
 
     for _, incident in incidents.iterrows():
@@ -512,7 +505,7 @@ def save_project_data_to_database(
             incident["incident_id"]
         )
 
-    # Save each real project alert
+    # Save each alert
     for _, alert in data.iterrows():
 
         correlation_key = alert[
@@ -571,7 +564,7 @@ async def lifespan(app: FastAPI):
     init_db()
 
     # --------------------------------------------------------
-    # PHASE 4 — Load REAL project alerts
+    # PHASE 4 — Load project alerts
     # --------------------------------------------------------
 
     alerts = load_alerts()
@@ -648,7 +641,7 @@ app = FastAPI(
     description=(
         "End-to-end cybersecurity anomaly detection, "
         "alert correlation, incident prioritization, "
-        "explainability and database storage."
+        "explainability, database storage and backend API."
     ),
     version="10.0",
     lifespan=lifespan
@@ -670,7 +663,7 @@ def root():
 
 
 # ============================================================
-# ORIGINAL ALERT ENDPOINT
+# ORIGINAL ALERTS ENDPOINT
 # ============================================================
 
 @app.get("/alerts")
@@ -692,7 +685,7 @@ def get_alerts():
 
 
 # ============================================================
-# ORIGINAL INCIDENT ENDPOINT
+# ORIGINAL INCIDENTS ENDPOINT
 # ============================================================
 
 @app.get("/incidents")
@@ -718,7 +711,9 @@ def get_incidents():
 # ============================================================
 
 @app.get("/incidents/{incident_id}")
-def get_incident(incident_id: int):
+def get_incident(
+    incident_id: int
+):
 
     if incidents_cache.empty:
 
@@ -728,7 +723,8 @@ def get_incident(incident_id: int):
         )
 
     incident = incidents_cache[
-        incidents_cache["incident_id"] == incident_id
+        incidents_cache["incident_id"]
+        == incident_id
     ]
 
     if incident.empty:
@@ -742,7 +738,7 @@ def get_incident(incident_id: int):
 
 
 # ============================================================
-# ORIGINAL DATABASE ENDPOINT
+# ORIGINAL DATABASE INCIDENTS ENDPOINT
 # ============================================================
 
 @app.get("/database/incidents")
@@ -769,18 +765,25 @@ def get_database_incidents():
 # PHASE 10 — BACKEND API
 # ============================================================
 
+# ------------------------------------------------------------
+# HEALTH CHECK
+# ------------------------------------------------------------
+
 @app.get("/health")
 def health_check():
 
     return {
         "status": "healthy",
-        "service": "Cybersecurity Incident Prioritization API",
+        "service": (
+            "Cybersecurity Incident "
+            "Prioritization API"
+        ),
         "phase": 10
     }
 
 
 # ------------------------------------------------------------
-# PHASE 10 — ALERTS API
+# API — ALERTS
 # ------------------------------------------------------------
 
 @app.get("/api/alerts")
@@ -802,7 +805,7 @@ def api_get_alerts():
 
 
 # ------------------------------------------------------------
-# PHASE 10 — INCIDENTS API
+# API — INCIDENTS
 # ------------------------------------------------------------
 
 @app.get("/api/incidents")
@@ -824,11 +827,13 @@ def api_get_incidents():
 
 
 # ------------------------------------------------------------
-# PHASE 10 — SINGLE INCIDENT API
+# API — SINGLE INCIDENT
 # ------------------------------------------------------------
 
 @app.get("/api/incidents/{incident_id}")
-def api_get_incident(incident_id: int):
+def api_get_incident(
+    incident_id: int
+):
 
     if incidents_cache.empty:
 
@@ -838,7 +843,8 @@ def api_get_incident(incident_id: int):
         )
 
     incident = incidents_cache[
-        incidents_cache["incident_id"] == incident_id
+        incidents_cache["incident_id"]
+        == incident_id
     ]
 
     if incident.empty:
@@ -852,7 +858,7 @@ def api_get_incident(incident_id: int):
 
 
 # ------------------------------------------------------------
-# PHASE 10 — DATABASE INCIDENTS API
+# API — DATABASE INCIDENTS
 # ------------------------------------------------------------
 
 @app.get("/api/database/incidents")
@@ -876,7 +882,7 @@ def api_get_database_incidents():
 
 
 # ------------------------------------------------------------
-# PHASE 10 — STATISTICS API
+# API — STATISTICS
 # ------------------------------------------------------------
 
 @app.get("/api/statistics")
@@ -886,11 +892,11 @@ def get_statistics():
 
         return {
             "total_incidents": 0,
+            "total_alerts": len(alerts_cache),
             "critical": 0,
             "high": 0,
             "medium": 0,
-            "low": 0,
-            "total_alerts": len(alerts_cache)
+            "low": 0
         }
 
     priority_column = "final_priority"
@@ -905,8 +911,12 @@ def get_statistics():
     )
 
     return {
-        "total_incidents": len(incidents_cache),
-        "total_alerts": len(alerts_cache),
+        "total_incidents": len(
+            incidents_cache
+        ),
+        "total_alerts": len(
+            alerts_cache
+        ),
         "critical": int(
             (priorities == "CRITICAL").sum()
         ),
