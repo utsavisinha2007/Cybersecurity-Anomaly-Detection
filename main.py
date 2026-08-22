@@ -62,7 +62,9 @@ def load_alerts():
 
         alerts_cache = df
 
-        print(f"Loaded {len(df)} project alerts successfully.")
+        print(
+            f"Loaded {len(df)} project alerts successfully."
+        )
 
         return df
 
@@ -361,7 +363,10 @@ def add_explanations(incidents_df):
                 row.get("anomaly_score", 0)
             ),
             priority=str(
-                row.get("final_priority", row.get("priority", "LOW"))
+                row.get(
+                    "final_priority",
+                    row.get("priority", "LOW")
+                )
             ),
             related_alerts=int(
                 row.get("alert_count", 0)
@@ -401,7 +406,8 @@ def save_project_data_to_database(
         return
 
     print(
-        "Saving Phase 6/7/8 project incidents to Phase 9 database..."
+        "Saving Phase 6/7/8 project incidents "
+        "to Phase 9 database..."
     )
 
     # --------------------------------------------------------
@@ -433,7 +439,6 @@ def save_project_data_to_database(
         if not isinstance(reasons, list):
             reasons = [str(reasons)]
 
-        # Save incident
         save_incident(
             incident_id=incident_id,
             risk_score=risk_score,
@@ -448,9 +453,9 @@ def save_project_data_to_database(
     if alerts.empty:
         return
 
-    # Recreate correlation key so alerts can be linked
     data = alerts.copy()
 
+    # Find source column
     source_col = None
 
     for col in [
@@ -463,6 +468,7 @@ def save_project_data_to_database(
             source_col = col
             break
 
+    # Find destination column
     destination_col = None
 
     for col in [
@@ -476,6 +482,7 @@ def save_project_data_to_database(
             destination_col = col
             break
 
+    # Recreate correlation key
     if source_col and destination_col:
 
         data["correlation_key"] = (
@@ -505,7 +512,7 @@ def save_project_data_to_database(
             incident["incident_id"]
         )
 
-    # Save each real alert
+    # Save each real project alert
     for _, alert in data.iterrows():
 
         correlation_key = alert[
@@ -518,11 +525,6 @@ def save_project_data_to_database(
 
         if incident_id is None:
             continue
-
-        alert_id = alert.get(
-            "alert_id",
-            None
-        )
 
         alert_type = alert.get(
             "alert_type",
@@ -648,7 +650,7 @@ app = FastAPI(
         "alert correlation, incident prioritization, "
         "explainability and database storage."
     ),
-    version="9.0",
+    version="10.0",
     lifespan=lifespan
 )
 
@@ -662,13 +664,13 @@ def root():
 
     return {
         "project": "Cybersecurity Incident Prioritization",
-        "phases": "4-9",
+        "phases": "4-10",
         "status": "running"
     }
 
 
 # ============================================================
-# GET ALERTS
+# ORIGINAL ALERT ENDPOINT
 # ============================================================
 
 @app.get("/alerts")
@@ -690,7 +692,7 @@ def get_alerts():
 
 
 # ============================================================
-# GET INCIDENTS
+# ORIGINAL INCIDENT ENDPOINT
 # ============================================================
 
 @app.get("/incidents")
@@ -712,13 +714,11 @@ def get_incidents():
 
 
 # ============================================================
-# GET SINGLE INCIDENT
+# ORIGINAL SINGLE INCIDENT ENDPOINT
 # ============================================================
 
 @app.get("/incidents/{incident_id}")
-def get_incident(
-    incident_id: int
-):
+def get_incident(incident_id: int):
 
     if incidents_cache.empty:
 
@@ -728,8 +728,7 @@ def get_incident(
         )
 
     incident = incidents_cache[
-        incidents_cache["incident_id"]
-        == incident_id
+        incidents_cache["incident_id"] == incident_id
     ]
 
     if incident.empty:
@@ -743,7 +742,7 @@ def get_incident(
 
 
 # ============================================================
-# GET DATABASE INCIDENTS
+# ORIGINAL DATABASE ENDPOINT
 # ============================================================
 
 @app.get("/database/incidents")
@@ -763,6 +762,163 @@ def get_database_incidents():
             }
             for row in records
         ]
+    }
+
+
+# ============================================================
+# PHASE 10 — BACKEND API
+# ============================================================
+
+@app.get("/health")
+def health_check():
+
+    return {
+        "status": "healthy",
+        "service": "Cybersecurity Incident Prioritization API",
+        "phase": 10
+    }
+
+
+# ------------------------------------------------------------
+# PHASE 10 — ALERTS API
+# ------------------------------------------------------------
+
+@app.get("/api/alerts")
+def api_get_alerts():
+
+    if alerts_cache.empty:
+
+        return {
+            "count": 0,
+            "alerts": []
+        }
+
+    return {
+        "count": len(alerts_cache),
+        "alerts": alerts_cache.to_dict(
+            orient="records"
+        )
+    }
+
+
+# ------------------------------------------------------------
+# PHASE 10 — INCIDENTS API
+# ------------------------------------------------------------
+
+@app.get("/api/incidents")
+def api_get_incidents():
+
+    if incidents_cache.empty:
+
+        return {
+            "count": 0,
+            "incidents": []
+        }
+
+    return {
+        "count": len(incidents_cache),
+        "incidents": incidents_cache.to_dict(
+            orient="records"
+        )
+    }
+
+
+# ------------------------------------------------------------
+# PHASE 10 — SINGLE INCIDENT API
+# ------------------------------------------------------------
+
+@app.get("/api/incidents/{incident_id}")
+def api_get_incident(incident_id: int):
+
+    if incidents_cache.empty:
+
+        raise HTTPException(
+            status_code=404,
+            detail="No incidents available"
+        )
+
+    incident = incidents_cache[
+        incidents_cache["incident_id"] == incident_id
+    ]
+
+    if incident.empty:
+
+        raise HTTPException(
+            status_code=404,
+            detail="Incident not found"
+        )
+
+    return incident.iloc[0].to_dict()
+
+
+# ------------------------------------------------------------
+# PHASE 10 — DATABASE INCIDENTS API
+# ------------------------------------------------------------
+
+@app.get("/api/database/incidents")
+def api_get_database_incidents():
+
+    records = fetch_all_incidents()
+
+    return {
+        "count": len(records),
+        "incidents": [
+            {
+                "incident_id": row[0],
+                "risk_score": row[1],
+                "priority": row[2],
+                "reasons": row[3],
+                "timestamp": row[4]
+            }
+            for row in records
+        ]
+    }
+
+
+# ------------------------------------------------------------
+# PHASE 10 — STATISTICS API
+# ------------------------------------------------------------
+
+@app.get("/api/statistics")
+def get_statistics():
+
+    if incidents_cache.empty:
+
+        return {
+            "total_incidents": 0,
+            "critical": 0,
+            "high": 0,
+            "medium": 0,
+            "low": 0,
+            "total_alerts": len(alerts_cache)
+        }
+
+    priority_column = "final_priority"
+
+    if priority_column not in incidents_cache.columns:
+        priority_column = "priority"
+
+    priorities = (
+        incidents_cache[priority_column]
+        .astype(str)
+        .str.upper()
+    )
+
+    return {
+        "total_incidents": len(incidents_cache),
+        "total_alerts": len(alerts_cache),
+        "critical": int(
+            (priorities == "CRITICAL").sum()
+        ),
+        "high": int(
+            (priorities == "HIGH").sum()
+        ),
+        "medium": int(
+            (priorities == "MEDIUM").sum()
+        ),
+        "low": int(
+            (priorities == "LOW").sum()
+        )
     }
 
 
