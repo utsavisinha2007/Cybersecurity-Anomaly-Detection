@@ -155,10 +155,93 @@ async def lifespan(app: FastAPI):
         print(
             f"Created {len(incidents_cache)} correlated incidents."
         )
+           # PHASE 7 — Incident Prioritization
+    incidents_cache = prioritize_incidents(incidents_cache)
+
+    print(
+        "Phase 7 incident prioritization completed."
+    )
 
     yield
 
     print("Shutting down Phase 5 engine...")
+
+# ============================================================
+# PHASE 7 — INCIDENT PRIORITIZATION
+# ============================================================
+
+def prioritize_incidents(incidents_df):
+    """
+    Phase 7: Prioritize incidents created by Phase 6.
+
+    Phase 6 remains unchanged.
+    This function only adds risk_score and final_priority
+    to the incidents produced by the correlation engine.
+    """
+
+    if incidents_df.empty:
+        return incidents_df
+
+    prioritized = incidents_df.copy()
+
+    def calculate_incident_risk(row):
+        score = 0
+
+        # 1. Existing Phase 6 priority
+        priority = str(row.get("priority", "")).upper()
+
+        priority_scores = {
+            "CRITICAL": 70,
+            "HIGH": 50,
+            "MEDIUM": 30,
+            "LOW": 10
+        }
+
+        score += priority_scores.get(priority, 20)
+
+        # 2. Number of correlated alerts
+        alert_count = int(row.get("alert_count", 0))
+
+        if alert_count >= 100:
+            score += 30
+        elif alert_count >= 10:
+            score += 20
+        elif alert_count >= 5:
+            score += 10
+        elif alert_count >= 2:
+            score += 5
+
+        # Maximum score = 100
+        return min(score, 100)
+
+    # Calculate numerical risk score
+    prioritized["risk_score"] = prioritized.apply(
+        calculate_incident_risk,
+        axis=1
+    )
+
+    # Convert risk score into final Phase 7 priority
+    def assign_final_priority(score):
+        if score >= 80:
+            return "CRITICAL"
+        elif score >= 60:
+            return "HIGH"
+        elif score >= 30:
+            return "MEDIUM"
+        else:
+            return "LOW"
+
+    prioritized["final_priority"] = prioritized["risk_score"].apply(
+        assign_final_priority
+    )
+
+    # Highest-risk incidents appear first
+    prioritized = prioritized.sort_values(
+        by="risk_score",
+        ascending=False
+    ).reset_index(drop=True)
+
+    return prioritized
 
 
 app = FastAPI(
