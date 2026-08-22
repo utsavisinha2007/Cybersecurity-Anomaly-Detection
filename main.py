@@ -2,8 +2,7 @@ import os
 import pandas as pd
 from fastapi import FastAPI, HTTPException
 from contextlib import asynccontextmanager
-
-
+from risk.explainability import generate_explanation
 ALERTS_FILE = "data/alerts.csv"
 
 alerts_cache = pd.DataFrame()
@@ -129,14 +128,16 @@ def correlate_alerts(df):
             priority = "LOW"
 
         incidents.append(
-            {
-                "incident_id": incident_id,
-                "correlation_key": key,
-                "alert_count": len(group),
-                "priority": priority,
-            }
-        )
-
+    {
+        "incident_id": incident_id,
+        "correlation_key": key,
+        "alert_count": len(group),
+        "priority": priority,
+        "anomaly_score": float(
+            group["anomaly_score"].mean()
+        ) if "anomaly_score" in group.columns else 0.0,
+    }
+)
     return pd.DataFrame(incidents)
 
 
@@ -161,6 +162,11 @@ async def lifespan(app: FastAPI):
     print(
         "Phase 7 incident prioritization completed."
     )
+    incidents_cache = add_explanations(incidents_cache)
+
+    print(
+    "Phase 8 incident explainability completed."
+)
 
     yield
 
@@ -242,6 +248,58 @@ def prioritize_incidents(incidents_df):
     ).reset_index(drop=True)
 
     return prioritized
+# ============================================================
+# PHASE 8 — INCIDENT EXPLAINABILITY
+# ============================================================
+
+def add_explanations(incidents_df):
+    """
+    Phase 8:
+    Add human-readable explanations to Phase 7 incidents.
+    """
+
+    if incidents_df.empty:
+        return incidents_df
+
+    explained = incidents_df.copy()
+
+    def create_explanation(row):
+
+        anomaly_score = row.get(
+            "anomaly_score",
+            0.0
+        )
+
+        priority = row.get(
+            "final_priority",
+            row.get("priority", "LOW")
+        )
+
+        related_alerts = row.get(
+            "alert_count",
+            0
+        )
+
+        # Three or more related alerts indicate repeated activity
+        repeated_activity = related_alerts >= 3
+
+        # Prototype asset impact
+        asset_impact = "HIGH"
+
+        return generate_explanation(
+            anomaly_score=anomaly_score,
+            priority=priority,
+            related_alerts=related_alerts,
+            repeated_activity=repeated_activity,
+            asset_impact=asset_impact
+        )
+
+    explained["explanation"] = explained.apply(
+        create_explanation,
+        axis=1
+    )
+
+    return explained
 
 
 app = FastAPI(
