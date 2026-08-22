@@ -1,11 +1,3 @@
-"""
-PHASE 8 - INCIDENT EXPLAINABILITY
-
-Explains why an incident received its Phase 7 priority.
-Phase 8 does NOT recalculate the Phase 7 risk score.
-"""
-
-
 def generate_explanation(
     anomaly_score,
     priority,
@@ -13,6 +5,12 @@ def generate_explanation(
     repeated_activity=False,
     asset_impact="LOW"
 ):
+    """
+    PHASE 8 - INCIDENT EXPLAINABILITY
+
+    Explains why an incident received its Phase 7 priority.
+    """
+
     reasons = []
 
     # 1. Anomaly score
@@ -36,8 +34,8 @@ def generate_explanation(
     # 2. Related alerts
     if related_alerts >= 5:
         reasons.append(
-            f"{related_alerts} related alerts indicate a concentrated sequence "
-            "of suspicious activity."
+            f"{related_alerts} related alerts indicate a concentrated "
+            "sequence of suspicious activity."
         )
     elif related_alerts >= 3:
         reasons.append(
@@ -70,6 +68,7 @@ def generate_explanation(
             "The affected asset has moderate impact."
         )
 
+    # Keep Phase 7 priority unchanged
     priority = str(priority).upper()
 
     return {
@@ -84,7 +83,10 @@ def generate_explanation(
     }
 
 
+# ==========================================
 # PHASE 8 TEST
+# ==========================================
+
 if __name__ == "__main__":
 
     explanation = generate_explanation(
