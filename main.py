@@ -1,31 +1,39 @@
 import os
 import pandas as pd
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from risk.explainability import generate_explanation
-ALERTS_FILE = "data/alerts.csv"
 
-alerts_cache = pd.DataFrame()
+from risk.explainability import generate_explanation
+
+
+# ============================================================
+# FILE CONFIGURATION
+# ============================================================
+
+ANOMALY_RESULTS_FILE = "data/anomaly_results.csv"
+
 incidents_cache = pd.DataFrame()
 
 
-def load_alerts():
-    global alerts_cache
+# ============================================================
+# LOAD ANOMALY RESULTS
+# ============================================================
 
-    if not os.path.exists(ALERTS_FILE):
-        print("ERROR: data/alerts.csv not found!")
-        print("Please run Phase 4 first.")
+def load_incidents():
+    global incidents_cache
+
+    if not os.path.exists(ANOMALY_RESULTS_FILE):
+        print("ERROR: data/anomaly_results.csv not found!")
+        print("Please run Phase 3 first:")
+        print("python ml/isolation_forest.py")
         return pd.DataFrame()
 
     try:
-        # Try UTF-8 first
-        try:
-            df = pd.read_csv(ALERTS_FILE, encoding="utf-8")
-        except UnicodeDecodeError:
-            # Phase 4 CSV may be UTF-16
-            df = pd.read_csv(ALERTS_FILE, encoding="utf-16")
+        df = pd.read_csv(ANOMALY_RESULTS_FILE)
 
+        # Clean column names
         df.columns = (
             df.columns
             .str.strip()
@@ -33,231 +41,141 @@ def load_alerts():
             .str.replace(" ", "_")
         )
 
-        alerts_cache = df
+        print(f"Loaded {len(df)} anomaly records successfully.")
 
-        print(f"Loaded {len(df)} alerts successfully.")
+        # ----------------------------------------------------
+        # Create incident IDs
+        # ----------------------------------------------------
+
+        df.insert(
+            0,
+            "incident_id",
+            range(1, len(df) + 1)
+        )
+
+        # ----------------------------------------------------
+        # Convert attack label to readable incident type
+        # ----------------------------------------------------
+
+        if "attack_detected" in df.columns:
+
+            df["incident_type"] = df["attack_detected"].map({
+                0: "Normal",
+                1: "Attack"
+            }).fillna("Unknown")
+
+        else:
+            df["incident_type"] = "Unknown"
+
+        # ----------------------------------------------------
+        # Use Isolation Forest risk score
+        # ----------------------------------------------------
+
+        if "risk_score" in df.columns:
+
+            df["risk_score"] = pd.to_numeric(
+                df["risk_score"],
+                errors="coerce"
+            ).fillna(0)
+
+        else:
+            df["risk_score"] = 0
+
+        # ----------------------------------------------------
+        # Create priority from risk score
+        # ----------------------------------------------------
+
+        df["priority"] = df["risk_score"].apply(
+            assign_final_priority
+        )
+
+        # ----------------------------------------------------
+        # Alert count
+        # Each dataset row represents one security event
+        # ----------------------------------------------------
+
+        df["alert_count"] = 1
+
+        incidents_cache = df
+
+        print(
+            f"Created {len(incidents_cache)} incidents."
+        )
 
         return df
 
     except Exception as e:
-        print(f"Error loading alerts: {e}")
-        return pd.DataFrame()
-
-
-def calculate_priority(row):
-    """
-    Phase 5 priority calculation.
-
-    Priority is based on severity and confidence.
-    """
-
-    severity = str(row.get("severity", "")).lower()
-    confidence = str(row.get("confidence", "")).lower()
-
-    if severity == "critical":
-        return "CRITICAL"
-
-    if severity == "high":
-        return "HIGH"
-
-    if severity == "medium":
-        return "MEDIUM"
-
-    if severity == "low":
-        return "LOW"
-
-    if confidence in ["high", "0.9", "0.95", "1.0"]:
-        return "HIGH"
-
-    return "MEDIUM"
-
-
-def correlate_alerts(df):
-    """
-    Group related alerts into incidents.
-
-    Alerts are correlated using source/destination information
-    when those fields are available.
-    """
-
-    if df.empty:
-        return pd.DataFrame()
-
-    data = df.copy()
-
-    # Possible column names from different dataset versions
-    source_col = None
-    destination_col = None
-
-    for col in ["source_ip", "src_ip", "src"]:
-        if col in data.columns:
-            source_col = col
-            break
-
-    for col in ["destination_ip", "dst_ip", "destination", "dst"]:
-        if col in data.columns:
-            destination_col = col
-            break
-
-    if source_col and destination_col:
-        data["correlation_key"] = (
-            data[source_col].astype(str)
-            + " -> "
-            + data[destination_col].astype(str)
-        )
-    elif source_col:
-        data["correlation_key"] = data[source_col].astype(str)
-    else:
-        data["correlation_key"] = "UNKNOWN"
-
-    incidents = []
-
-    for incident_id, (key, group) in enumerate(
-        data.groupby("correlation_key"),
-        start=1
-    ):
-
-        priorities = group.apply(calculate_priority, axis=1)
-
-        if "CRITICAL" in priorities.values:
-            priority = "CRITICAL"
-        elif "HIGH" in priorities.values:
-            priority = "HIGH"
-        elif "MEDIUM" in priorities.values:
-            priority = "MEDIUM"
-        else:
-            priority = "LOW"
-
-        incidents.append(
-    {
-        "incident_id": incident_id,
-        "correlation_key": key,
-        "alert_count": len(group),
-        "priority": priority,
-        "anomaly_score": float(
-            group["anomaly_score"].mean()
-        ) if "anomaly_score" in group.columns else 0.0,
-    }
-)
-    return pd.DataFrame(incidents)
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-
-    global incidents_cache
-
-    print("Starting Phase 5 Incident Correlation Engine...")
-
-    alerts = load_alerts()
-
-    if not alerts.empty:
-        incidents_cache = correlate_alerts(alerts)
 
         print(
-            f"Created {len(incidents_cache)} correlated incidents."
+            f"Error loading anomaly results: {e}"
         )
-           # PHASE 7 — Incident Prioritization
-    incidents_cache = prioritize_incidents(incidents_cache)
 
-    print(
-        "Phase 7 incident prioritization completed."
-    )
-    incidents_cache = add_explanations(incidents_cache)
+        return pd.DataFrame()
 
-    print(
-    "Phase 8 incident explainability completed."
-)
-
-    yield
-
-    print("Shutting down Phase 5 engine...")
 
 # ============================================================
-# PHASE 7 — INCIDENT PRIORITIZATION
+# PHASE 7 — RISK / PRIORITY
 # ============================================================
+
+def assign_final_priority(score):
+
+    score = float(score)
+
+    if score >= 75:
+        return "CRITICAL"
+
+    elif score >= 50:
+        return "HIGH"
+
+    elif score >= 25:
+        return "MEDIUM"
+
+    else:
+        return "LOW"
+
 
 def prioritize_incidents(incidents_df):
-    """
-    Phase 7: Prioritize incidents created by Phase 6.
-
-    Phase 6 remains unchanged.
-    This function only adds risk_score and final_priority
-    to the incidents produced by the correlation engine.
-    """
 
     if incidents_df.empty:
         return incidents_df
 
     prioritized = incidents_df.copy()
 
-    def calculate_incident_risk(row):
-        score = 0
+    # Make sure risk score exists
+    if "risk_score" not in prioritized.columns:
 
-        # 1. Existing Phase 6 priority
-        priority = str(row.get("priority", "")).upper()
+        prioritized["risk_score"] = 0
 
-        priority_scores = {
-            "CRITICAL": 70,
-            "HIGH": 50,
-            "MEDIUM": 30,
-            "LOW": 10
-        }
+    prioritized["risk_score"] = pd.to_numeric(
+        prioritized["risk_score"],
+        errors="coerce"
+    ).fillna(0)
 
-        score += priority_scores.get(priority, 20)
-
-        # 2. Number of correlated alerts
-        alert_count = int(row.get("alert_count", 0))
-
-        if alert_count >= 100:
-            score += 30
-        elif alert_count >= 10:
-            score += 20
-        elif alert_count >= 5:
-            score += 10
-        elif alert_count >= 2:
-            score += 5
-
-        # Maximum score = 100
-        return min(score, 100)
-
-    # Calculate numerical risk score
-    prioritized["risk_score"] = prioritized.apply(
-        calculate_incident_risk,
-        axis=1
+    # Final priority
+    prioritized["final_priority"] = (
+        prioritized["risk_score"]
+        .apply(assign_final_priority)
     )
 
-    # Convert risk score into final Phase 7 priority
-    def assign_final_priority(score):
-        if score >= 80:
-            return "CRITICAL"
-        elif score >= 60:
-            return "HIGH"
-        elif score >= 30:
-            return "MEDIUM"
-        else:
-            return "LOW"
-
-    prioritized["final_priority"] = prioritized["risk_score"].apply(
-        assign_final_priority
+    # Keep priority synchronized
+    prioritized["priority"] = (
+        prioritized["final_priority"]
     )
 
-    # Highest-risk incidents appear first
+    # Highest risk first
     prioritized = prioritized.sort_values(
         by="risk_score",
         ascending=False
     ).reset_index(drop=True)
 
     return prioritized
+
+
 # ============================================================
-# PHASE 8 — INCIDENT EXPLAINABILITY
+# PHASE 8 — EXPLAINABILITY
 # ============================================================
 
 def add_explanations(incidents_df):
-    """
-    Phase 8:
-    Add human-readable explanations to Phase 7 incidents.
-    """
 
     if incidents_df.empty:
         return incidents_df
@@ -273,16 +191,21 @@ def add_explanations(incidents_df):
 
         priority = row.get(
             "final_priority",
-            row.get("priority", "LOW")
+            row.get(
+                "priority",
+                "LOW"
+            )
         )
 
         related_alerts = row.get(
             "alert_count",
-            0
+            1
         )
 
-        # Three or more related alerts indicate repeated activity
-        repeated_activity = related_alerts >= 3
+        # Repeated activity
+        repeated_activity = (
+            int(related_alerts) >= 3
+        )
 
         # Prototype asset impact
         asset_impact = "HIGH"
@@ -295,91 +218,267 @@ def add_explanations(incidents_df):
             asset_impact=asset_impact
         )
 
-    explained["explanation"] = explained.apply(
-        create_explanation,
-        axis=1
+    explained["explanation"] = (
+        explained.apply(
+            create_explanation,
+            axis=1
+        )
     )
 
     return explained
 
 
+# ============================================================
+# FASTAPI LIFESPAN
+# ============================================================
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+
+    global incidents_cache
+
+    print("============================================")
+    print(" CYBERSECURITY INCIDENT PRIORITIZATION")
+    print("============================================")
+    print("Loading Isolation Forest results...")
+    print("============================================")
+
+    incidents = load_incidents()
+
+    if not incidents.empty:
+
+        incidents = prioritize_incidents(
+            incidents
+        )
+
+        print(
+            "Phase 7 incident prioritization completed."
+        )
+
+        incidents = add_explanations(
+            incidents
+        )
+
+        print(
+            "Phase 8 incident explainability completed."
+        )
+
+        incidents_cache = incidents
+
+        print(
+            f"Final incidents available: "
+            f"{len(incidents_cache)}"
+        )
+
+        print("\n===== PRIORITY SUMMARY =====")
+
+        print(
+            incidents_cache[
+                "priority"
+            ].value_counts()
+        )
+
+    else:
+
+        incidents_cache = pd.DataFrame()
+
+    yield
+
+    print(
+        "Shutting down incident prioritization engine..."
+    )
+
+
+# ============================================================
+# FASTAPI APPLICATION
+# ============================================================
+
 app = FastAPI(
     title="Cybersecurity Incident Prioritization",
-    description="Phase 5 - Alert Correlation and Incident Formation",
-    version="5.0",
+    description=(
+        "AI-assisted cybersecurity anomaly "
+        "detection and incident prioritization system"
+    ),
+    version="6.0",
     lifespan=lifespan,
 )
 
+
+# ============================================================
+# CORS
+# ============================================================
+
 app.add_middleware(
     CORSMiddleware,
+
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
     ],
+
     allow_credentials=True,
+
     allow_methods=["*"],
+
     allow_headers=["*"],
 )
+
+
+# ============================================================
+# ROOT
+# ============================================================
+
 @app.get("/")
 def root():
+
     return {
-        "project": "Cybersecurity Incident Prioritization",
-        "phase": "Phase 5",
-        "status": "running",
+        "project":
+            "Cybersecurity Incident Prioritization",
+
+        "status":
+            "running",
+
+        "dataset":
+            "cybersecurity_intrusion_cleaned.csv",
+
+        "records":
+            len(incidents_cache)
     }
 
 
-@app.get("/alerts")
-def get_alerts():
-    if alerts_cache.empty:
-        return {
-            "count": 0,
-            "alerts": []
-        }
-
-    return {
-        "count": len(alerts_cache),
-        "alerts": alerts_cache.to_dict(orient="records")
-    }
-
+# ============================================================
+# GET INCIDENTS
+# ============================================================
 
 @app.get("/incidents")
 def get_incidents():
+
     if incidents_cache.empty:
+
         return {
             "count": 0,
             "incidents": []
         }
 
+    clean_data = incidents_cache.where(
+        pd.notnull(incidents_cache),
+        None
+    )
+
     return {
-        "count": len(incidents_cache),
-        "incidents": incidents_cache.to_dict(orient="records")
+        "count":
+            len(clean_data),
+
+        "incidents":
+            clean_data.to_dict(
+                orient="records"
+            )
     }
 
+
+# ============================================================
+# GET SINGLE INCIDENT
+# ============================================================
 
 @app.get("/incidents/{incident_id}")
 def get_incident(incident_id: int):
 
     if incidents_cache.empty:
+
         raise HTTPException(
             status_code=404,
             detail="No incidents available"
         )
 
     incident = incidents_cache[
-        incidents_cache["incident_id"] == incident_id
+        incidents_cache["incident_id"]
+        == incident_id
     ]
 
     if incident.empty:
+
         raise HTTPException(
             status_code=404,
             detail="Incident not found"
         )
 
-    return incident.iloc[0].to_dict()
+    record = incident.iloc[0]
 
+    record = record.where(
+        pd.notnull(record),
+        None
+    )
+
+    return record.to_dict()
+
+
+# ============================================================
+# SUMMARY
+# ============================================================
+
+@app.get("/summary")
+def get_summary():
+
+    if incidents_cache.empty:
+
+        return {
+            "total_incidents": 0,
+            "critical": 0,
+            "high": 0,
+            "medium": 0,
+            "low": 0
+        }
+
+    priority_counts = (
+        incidents_cache["priority"]
+        .value_counts()
+    )
+
+    return {
+
+        "total_incidents":
+            len(incidents_cache),
+
+        "critical":
+            int(
+                priority_counts.get(
+                    "CRITICAL",
+                    0
+                )
+            ),
+
+        "high":
+            int(
+                priority_counts.get(
+                    "HIGH",
+                    0
+                )
+            ),
+
+        "medium":
+            int(
+                priority_counts.get(
+                    "MEDIUM",
+                    0
+                )
+            ),
+
+        "low":
+            int(
+                priority_counts.get(
+                    "LOW",
+                    0
+                )
+            )
+    }
+
+
+# ============================================================
+# RUN SERVER
+# ============================================================
 
 if __name__ == "__main__":
+
     import uvicorn
 
     uvicorn.run(

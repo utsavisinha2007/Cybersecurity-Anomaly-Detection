@@ -1,125 +1,168 @@
 import pandas as pd
 from sklearn.ensemble import IsolationForest
+from sklearn.preprocessing import StandardScaler
 
 
 # ============================================
 # PHASE 3: ISOLATION FOREST ANOMALY DETECTION
 # ============================================
 
-# 1. Load the network dataset
-df = pd.read_csv("data/network_data.csv")
+INPUT_FILE = "data/cybersecurity_intrusion_cleaned.csv"
+OUTPUT_FILE = "data/anomaly_results.csv"
+
 
 print("============================================")
-print("        CYBER INCIDENT DETECTION SYSTEM")
-print("        PHASE 3 - ISOLATION FOREST")
+print("       CYBER INCIDENT DETECTION SYSTEM")
+print("       PHASE 3 - ISOLATION FOREST")
 print("============================================")
 
-print("\n===== ORIGINAL DATA =====")
-print(df)
+
+# 1. Load cleaned cybersecurity dataset
+df = pd.read_csv(INPUT_FILE)
+
+print("\n===== DATASET INFORMATION =====")
+print(f"Total records: {len(df)}")
+print(f"Total columns: {len(df.columns)}")
 
 
-# 2. Select numerical features for ML
+# 2. Select numerical cybersecurity features
 features = [
-    "flow_duration",
-    "packet_count",
-    "byte_count",
-    "port"
+    "network_packet_size",
+    "login_attempts",
+    "session_duration",
+    "ip_reputation_score",
+    "failed_logins",
+    "unusual_time_access"
 ]
 
-X = df[features]
+X = df[features].copy()
 
 
-# 3. Create Isolation Forest model
+# 3. Handle any remaining invalid values
+X = X.replace([float("inf"), float("-inf")], pd.NA)
+X = X.fillna(X.median())
+
+
+# 4. Standardize numerical features
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+
+# 5. Create Isolation Forest model
 model = IsolationForest(
     n_estimators=100,
-    contamination=0.2,
+    contamination=0.20,
     random_state=42
 )
 
 
-# 4. Train the model
-model.fit(X)
+# 6. Train the model
+model.fit(X_scaled)
 
 
-# 5. Generate anomaly scores
-df["anomaly_score"] = model.decision_function(X)
+# 7. Generate anomaly scores
+df["anomaly_score"] = model.decision_function(X_scaled)
 
 
-# 6. Generate anomaly predictions
+# 8. Generate anomaly predictions
 #    1  = Normal
 #   -1  = Anomaly
-df["anomaly"] = model.predict(X)
+df["anomaly"] = model.predict(X_scaled)
 
 
-# 7. Convert prediction into readable status
+# 9. Convert prediction into readable status
 df["status"] = df["anomaly"].map({
     1: "Normal",
     -1: "Anomaly"
 })
 
 
-# 8. Display complete results
+# 10. Convert anomaly score into a 0-100 risk score
+# Lower Isolation Forest score = more anomalous
+score_min = df["anomaly_score"].min()
+score_max = df["anomaly_score"].max()
+
+if score_max != score_min:
+    df["risk_score"] = (
+        (score_max - df["anomaly_score"])
+        / (score_max - score_min)
+        * 100
+    )
+else:
+    df["risk_score"] = 0
+
+
+df["risk_score"] = df["risk_score"].round(2)
+
+
+# 11. Assign severity
+def get_severity(score):
+    if score >= 75:
+        return "Critical"
+    elif score >= 50:
+        return "High"
+    elif score >= 25:
+        return "Medium"
+    else:
+        return "Low"
+
+
+df["severity"] = df["risk_score"].apply(get_severity)
+
+
+# 12. Display anomaly detection results
 print("\n===== ANOMALY DETECTION RESULTS =====")
 
-print(
-    df[
-        [
-            "timestamp",
-            "source_ip",
-            "destination_ip",
-            "flow_duration",
-            "packet_count",
-            "byte_count",
-            "port",
-            "anomaly_score",
-            "anomaly",
-            "status"
-        ]
-    ].to_string(index=False)
-)
+display_columns = [
+    "network_packet_size",
+    "login_attempts",
+    "session_duration",
+    "ip_reputation_score",
+    "failed_logins",
+    "unusual_time_access",
+    "anomaly_score",
+    "anomaly",
+    "status",
+    "risk_score",
+    "severity"
+]
+
+print(df[display_columns].to_string(index=False))
 
 
-# 9. Display only detected anomalies
+# 13. Display detected anomalies
 anomalies = df[df["status"] == "Anomaly"]
 
 print("\n===== DETECTED ANOMALIES =====")
 
 if len(anomalies) > 0:
     print(
-        anomalies[
-            [
-                "timestamp",
-                "source_ip",
-                "destination_ip",
-                "flow_duration",
-                "packet_count",
-                "byte_count",
-                "port",
-                "anomaly_score",
-                "status"
-            ]
-        ].to_string(index=False)
+        anomalies[display_columns]
+        .to_string(index=False)
     )
 else:
     print("No anomalies detected.")
 
 
-# 10. Display summary
+# 14. Detection summary
 normal_count = len(df[df["status"] == "Normal"])
 anomaly_count = len(df[df["status"] == "Anomaly"])
 
 print("\n===== DETECTION SUMMARY =====")
-print(f"Total network flows : {len(df)}")
-print(f"Normal flows        : {normal_count}")
-print(f"Anomalous flows     : {anomaly_count}")
+print(f"Total records      : {len(df)}")
+print(f"Normal records     : {normal_count}")
+print(f"Anomalous records  : {anomaly_count}")
 
 
-# 11. Save results for Phase 4
-output_file = "data/anomaly_results.csv"
+# 15. Severity summary
+print("\n===== RISK SUMMARY =====")
+print(df["severity"].value_counts())
 
-df.to_csv(output_file, index=False)
+
+# 16. Save results
+df.to_csv(OUTPUT_FILE, index=False)
 
 print("\n============================================")
-print(f"Results saved to: {output_file}")
+print(f"Results saved to: {OUTPUT_FILE}")
 print("Phase 3 completed successfully.")
 print("============================================")
